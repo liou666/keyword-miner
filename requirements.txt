@@ -1,0 +1,9 @@
+jsonpath==0.82.2
+pandas==2.1.0
+Requests==2.31.0
+rich==13.3.5
+chardet==3.0.4
+lxml==4.9.3
+bs4==0.0.1
+
+
