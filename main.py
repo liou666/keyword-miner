@@ -1,5 +1,5 @@
-import wb
-import xhs
+import core.wb as wb
+import core.xhs as xhs
 import tools.logger as logger
 
 if __name__ == '__main__':
