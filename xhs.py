@@ -1,16 +1,18 @@
 #!/usr/bin/python3
 import csv
+import math
 import hashlib
+import json
+import os
+
 from urllib import parse
 import requests
 from bs4 import BeautifulSoup
-from tqdm import tqdm
-import json
 from lxml import html
-from rich.console import Console
-from rich.prompt import Prompt
-import math
-console = Console()
+from tqdm import tqdm
+
+import tools.logger as logger
+import tools.utils as utils
 
 
 
@@ -22,24 +24,16 @@ def get_x_sign(api):
     return x_sign
 
 
-def spider(keyword, authorization, d_page, sort_by='general', ):
-    """
-    :param authorization:
-    :param keyword:
-    :param d_page: 页数
-    :param sort_by: general：综合排序，hot_desc：热度排序
-    :return:
-    """
+def spider(keyword, authorization, d_page, sort_by='general'):
     host = 'https://www.xiaohongshu.com'
     url = '/fe_api/burdock/weixin/v2/search/notes?keyword={}&sortBy={}' \
           '&page={}&pageSize=20&prependNoteIds=&needGifCover=true'.format(parse.quote(keyword),
                                                                           sort_by,
                                                                           d_page + 1)
-    # page 从0开始, 所以这里+1
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.143 Safari/537.36 MicroMessenger/7.0.9.501 NetType/WIFI MiniProgramEnv/Windows WindowsWechat',
         'Referer': 'https://servicewechat.com',
-        'Authorization': authorization,  # 在这里填入抓到的header
+        'Authorization': authorization,  # 过期时间暂时未知
         'X-Sign': get_x_sign(url)
     }
 
@@ -48,30 +42,26 @@ def spider(keyword, authorization, d_page, sort_by='general', ):
         res = json.loads(resp.text)
         return res['data']['notes'], res['data']['totalCount']
     else:
-        print('Fail:{}'.format(resp.text))
+        logger.error('{}'.format(resp.text))
 
 
-# 拿到帖子 id
 def getlistByName(keyword, authorization_, pageNum=1, sorted_way="general"):
     notes = []
-    with console.status(f"[bold green]开始检索关键词【{keyword}】相关内容...") as status:
+    with logger.status(f"开始检索关键词【{keyword}】相关内容...") as status:
       for i in range(0, pageNum):
           tmp = spider(keyword, authorization_, d_page=i, sort_by=sorted_way)
           if (len(tmp[0]) <= 0):
               break
           else:
               notes.extend(tmp[0])
-
     ids = []
     for note in notes:
         ids.append(note['id'])
-
-    console.print(f"✅ 检索关键词【{keyword}】相关内容完毕！共检索到" + len(ids).__str__() + "篇内容")
+    logger.success(f"检索关键词【{keyword}】相关内容完毕！共检索到" + len(ids).__str__() + "篇内容")
     return ids
 
-# 获取文章信息返回
 def getInfo(ids,keyword):
-    console.print(f"🔸 开始爬取【{keyword}】相关内容")
+    logger.info(f"开始爬取【{keyword}】相关内容")
     infolist = []
     for id in tqdm(ids):
         url = "https://www.xiaohongshu.com/explore/" + id
@@ -82,7 +72,6 @@ def getInfo(ids,keyword):
             "Connection": "keep-alive",
             "Host": "www.xiaohongshu.com",
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Mobile/15E148 Safari/604.1"
-
         }
         resp = requests.get(url, headers=headers)
         resp.encoding =  "utf-8"
@@ -96,30 +85,31 @@ def getInfo(ids,keyword):
         info_dic = json.loads(json_str, strict=False)
         info_dic['link'] = url
         
-        # 小红书有反爬机制短时间重复 会有些数据获取不到 数据为空的就过滤掉
         if info_dic['name'] != '':
             infolist.append(info_dic)
-    console.print(f"✅ 爬取【{keyword}】相关笔记完成 共" + len(infolist).__str__() + "篇")
+    logger.success(f"爬取【{keyword}】相关笔记完成 共" + len(infolist).__str__() + "篇")
     return infolist
 
 
 def saveCsvFile(data, keyName):
-    print("🔸 开始将数据写入到"+keyName+'.csv文件')
-
-    f = open(keyName + '.csv', 'w', newline='', encoding="utf-8")
+    logger.info("开始将数据写入到"+keyName+'.csv文件')
+    csv_file = '{}_xhs.csv'.format(keyName)
+    if os.path.exists(csv_file):
+        os.remove(csv_file)
+        logger.warn('文件存在，已删除: {}'.format(csv_file))
+    f = open(csv_file, 'w', newline='', encoding="utf-8")
     csv_write = csv.writer(f)
-    with console.status("[bold green]开始将数据写入到本地文件...") as status:
+    with logger.status("[bold green]开始将数据写入到本地文件...") as status:
       for i in range(len(data)):
           csv_write.writerow(data[i])
       f.close()
-    console.print("✅ 数据已成功写入到本地文件"+keyName+'.csv')
+    logger.success("数据已成功写入到本地文件"+keyName+'.csv')
 
 
 def toCsv(infolist, keyname):
     listlist = [['小红书地址', '标题', '内容', '作者昵称','作者首页地址']]
     for info in infolist:
         name = info['name']
-
         link = info['link']
         description = info['description']
         author = info['author']['name']
@@ -129,15 +119,15 @@ def toCsv(infolist, keyname):
     saveCsvFile(listlist, keyname)
 
 
-if __name__ == "__main__":
- 
-    keyName = Prompt.ask("[bold cyan]📖 输入要检索的关键字[/bold cyan]")
-    pageSize = Prompt.ask("[bold cyan]🤔️ 输入要抓取的数据量[/bold cyan]")
-   
-    authorization = "wxmp.28208cac-d132-46c6-8cd5-3283684bd3c5"
+def start(keyName,pageSize):
+    logger.start("开始小红书数据爬取任务...")
+    authorization = utils.getEnv("XHS_AUTHORIZATION")
     sortedWay = "hot_desc"
-
     idList = getlistByName(keyName, authorization, math.ceil(int(pageSize)/20),sortedWay)
+    toCsv(getInfo(idList,keyName), keyName.replace(" ", "_"))
+    logger.success("小红书数据爬取完成")
 
 
-    toCsv(getInfo(idList,keyName), keyName)
+
+ 
+    
